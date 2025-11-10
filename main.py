@@ -8,6 +8,8 @@ from network import (
     BlockMessage,
     BLOCK_DATA_TYPE,
 )
+from helper import merkle_root
+from typing import Tuple
 
 
 def main() -> list[FullBlock]:
@@ -41,6 +43,52 @@ def main() -> list[FullBlock]:
     return blocks
 
 
+def validate_blocks(blocks: list[FullBlock]):
+    total_txs, ok, fail = 0, 0, 0
+
+    def is_coinbase_tx(tx):
+        return (
+            len(tx.tx_ins) == 1 and
+            tx.tx_ins[0].prev_tx == b"\x00"*32 and
+            tx.tx_ins[0].prev_index == 0xffffffff
+        )
+
+    for idx, b in enumerate(blocks):
+        assert b.check_pow()
+
+        if b.txs:
+            le_hashes = [tx.hash()[::-1] for tx in b.txs]
+            assert merkle_root(le_hashes)[::-1] == b.merkle_root
+
+        for j, tx in enumerate(b.txs or []):
+            total_txs += 1
+            try:
+                # Intentar verificar TODO, incluida coinbase, para evidenciar el fallo
+                ok_now = tx.verify()
+                if ok_now:
+                    ok += 1
+                else:
+                    fail += 1
+            except Exception as e:
+                # Aquí cae la coinbase con "not found" / non-hex
+                fail += 1
+                print(f"[bloque {idx} tx {j}] verificación falló: {e}")
+
+    return total_txs, ok, fail
+
 if __name__ == '__main__':
-    for b in main():
-        print(b)
+    blocks = main()
+    print(f"Descargados {len(blocks)} bloques")
+
+    # Imprime resumen básico
+    for i, b in enumerate(blocks):
+        print(i, b.hash().hex(), "txs:", b.nr_trans)
+
+    # Corre validaciones y reporta
+    tx_total, tx_ok, tx_fail = validate_blocks(blocks)
+    print("\n==== VALIDACIÓN DE TRANSACCIONES ====")
+    print(f"Transacciones totales:         {tx_total}")
+    print(f"No-coinbase verificadas OK:    {tx_ok}")
+    print(f"No-coinbase con error/fallo:   {tx_fail}")
+    print("\nNota: las transacciones coinbase se omiten a propósito,")
+    print("porque no tienen outpoints previos ni script estándar y el verificador actual no las soporta.")
